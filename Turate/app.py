@@ -49,7 +49,25 @@ def render_plotly(fig, height=450):
 # --- CARICAMENTO DATI ---
 @st.cache_data
 def load_data():
-    excel_filename = "Turate_Basket.xlsx" if os.path.exists("Turate_Basket.xlsx") else "Turate_Basket.xls"
+    BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
+# Percorsi possibili per il file Excel
+possible_paths = [
+    os.path.join(BASE_DIR, "Turate_Basket.xlsx"),
+    os.path.join(BASE_DIR, "Turate", "Turate_Basket.xlsx"),
+    os.path.join(BASE_DIR, "Turate_Basket.xls"),
+    os.path.join(BASE_DIR, "Turate", "Turate_Basket.xls"),
+]
+
+excel_filename = None
+for path in possible_paths:
+    if os.path.exists(path):
+        excel_filename = path
+        break
+
+if not excel_filename:
+    st.error("Errore: Impossibile trovare il file Excel 'Turate_Basket.xlsx' nella cartella del progetto.")
+    st.stop()
     xls = pd.ExcelFile(excel_filename)
     sheet_names = xls.sheet_names
     
