@@ -97,6 +97,9 @@ def load_data():
     
     return df_squadra, df_giocatori
 
+# --- CARICAMENTO DATI EFFETTIVO ---
+df_squadra, df_giocatori = load_data()
+
 # --- SIDEBAR & NAVIGAZIONE ---
 st.sidebar.title("🏀 Turate Basket U18")
 page = st.sidebar.radio("Seleziona Sezione:", ["Game Center (Partita)", "Profilo Giocatore", "Analisi Avanzata & Roster"])
