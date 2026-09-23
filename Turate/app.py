@@ -43,9 +43,10 @@ def render_plotly(fig, height=450):
     )
     fig.update_traces(textfont_color="#000000")
     
-    fig_html = fig.to_html(include_plotlyjs='cdn', auto_play=False)
+    # Nasconde completamente la modebar dai grafici
+    fig_html = fig.to_html(include_plotlyjs='cdn', auto_play=False, config={'displayModeBar': False})
     components.html(fig_html, height=height, scrolling=False)
-
+    
 @st.cache_data
 def load_data():
     # 1. Trova il percorso del file Excel
