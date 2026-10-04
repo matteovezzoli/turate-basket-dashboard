@@ -49,8 +49,15 @@ def render_plotly(fig, height=450):
 # --- CARICAMENTO DATI ---
 @st.cache_data
 def load_data():
-    excel_filename = "Turate_Basket.xlsx" if os.path.exists("Turate_Basket.xlsx") else "Turate_Basket.xls"
-    xls = pd.ExcelFile(excel_filename)
+    # Cerca il file nella cartella di app.py (non nella cartella di lavoro), ignorando maiuscole/minuscole
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    candidati = sorted(
+        (f for f in os.listdir(base_dir) if f.lower() in ("turate_basket.xlsx", "turate_basket.xls")),
+        key=lambda f: not f.lower().endswith(".xlsx")
+    )
+    if not candidati:
+        raise FileNotFoundError(f"Nessun file Turate_Basket.xlsx in {base_dir}. File presenti: {os.listdir(base_dir)}")
+    xls = pd.ExcelFile(os.path.join(base_dir, candidati[0]))
     sheet_names = xls.sheet_names
     
     giocatori_sheet = next((s for s in sheet_names if "gioc" in s.lower()), sheet_names[0])
