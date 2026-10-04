@@ -43,35 +43,16 @@ def render_plotly(fig, height=450):
     )
     fig.update_traces(textfont_color="#000000")
     
-    # Nasconde completamente la modebar dai grafici
-    fig_html = fig.to_html(include_plotlyjs='cdn', auto_play=False, config={'displayModeBar': False})
+    fig_html = fig.to_html(include_plotlyjs='cdn', auto_play=False)
     components.html(fig_html, height=height, scrolling=False)
-    
+
+# --- CARICAMENTO DATI ---
 @st.cache_data
 def load_data():
-    # 1. Trova il percorso del file Excel
-    BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-    possible_paths = [
-        os.path.join(BASE_DIR, "Turate_Basket.xlsx"),
-        os.path.join(BASE_DIR, "Turate", "Turate_Basket.xlsx"),
-        os.path.join(BASE_DIR, "Turate_Basket.xls"),
-        os.path.join(BASE_DIR, "Turate", "Turate_Basket.xls"),
-    ]
-
-    excel_filename = None
-    for path in possible_paths:
-        if os.path.exists(path):
-            excel_filename = path
-            break
-
-    if not excel_filename:
-        st.error("Errore: Impossibile trovare il file Excel 'Turate_Basket.xlsx' nella cartella del progetto.")
-        st.stop()
-
-    # 2. Legge e processa il file Excel
+    excel_filename = "Turate_Basket.xlsx" if os.path.exists("Turate_Basket.xlsx") else "Turate_Basket.xls"
     xls = pd.ExcelFile(excel_filename)
     sheet_names = xls.sheet_names
-
+    
     giocatori_sheet = next((s for s in sheet_names if "gioc" in s.lower()), sheet_names[0])
     squadra_sheet = next((s for s in sheet_names if "squad" in s.lower()), sheet_names[1] if len(sheet_names) > 1 else sheet_names[0])
 
@@ -94,12 +75,16 @@ def load_data():
             df_giocatori[c] = pd.to_numeric(df_giocatori[c], errors="coerce")
 
     # Flag: giocato = True se c'è almeno un dato registrato che sia diverso da 0 e non nullo
+    # Se il giocatore ha tutti 0 o tutti NaN nelle statistiche della partita, Ha_Giocato diventa False
     df_giocatori["Ha_Giocato"] = df_giocatori[cols_stats].fillna(0).sum(axis=1) > 0
     
     return df_squadra, df_giocatori
 
-# --- CARICAMENTO DATI EFFETTIVO ---
-df_squadra, df_giocatori = load_data()
+try:
+    df_squadra, df_giocatori = load_data()
+except Exception as e:
+    st.error(f"Errore durante il caricamento del file Excel 'Turate_Basket': {e}")
+    st.stop()
 
 # --- SIDEBAR & NAVIGAZIONE ---
 st.sidebar.title("🏀 Turate Basket U18")
