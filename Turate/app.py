@@ -31,6 +31,10 @@ st.markdown("""
     [class*="st-key-palle_perse"] [data-testid="stMetricValue"] {
         color: #c62828 !important;
     }
+    /* Nasconde il pulsante "schermo intero" di Streamlit sopra i grafici */
+    [data-testid="stElementContainer"]:has(.stPlotlyChart) [data-testid="stElementToolbar"] {
+        display: none !important;
+    }
     .stSidebar {
         background-color: #f7fafc;
     }
@@ -46,8 +50,14 @@ def render_plotly(fig, height=450):
     )
     fig.update_traces(textfont_color="#000000")
     
-    fig.update_layout(height=height)
-    st.plotly_chart(fig, width="stretch", theme=None)
+    # Grafici fissi: niente zoom/trascinamento e niente barra dei comandi al passaggio del mouse
+    fig.update_layout(height=height, dragmode=False)
+    fig.update_xaxes(fixedrange=True)
+    fig.update_yaxes(fixedrange=True)
+    st.plotly_chart(
+        fig, width="stretch", theme=None,
+        config={"displayModeBar": False, "scrollZoom": False, "doubleClick": False, "displaylogo": False}
+    )
 
 # --- CARICAMENTO DATI ---
 @st.cache_data
@@ -343,6 +353,8 @@ elif page == "Analisi Avanzata & Roster":
         yaxis_title="Punti",
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
     )
+    # Numeri sui punti in grassetto per leggerli meglio
+    fig_season.update_traces(texttemplate="<b>%{text}</b>", textfont_size=13)
     render_plotly(fig_season, height=450)
 
     st.markdown("---")
@@ -422,6 +434,8 @@ elif page == "Analisi Avanzata & Roster":
         yaxis=dict(range=[0, 105]),
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
     )
+    # Numeri sui punti in grassetto per leggerli meglio
+    fig_pct_trend.update_traces(texttemplate="<b>%{text}</b>", textfont_size=13)
     render_plotly(fig_pct_trend, height=450)
 
     st.markdown("---")
