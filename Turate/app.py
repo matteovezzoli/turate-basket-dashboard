@@ -1,6 +1,5 @@
 import os
 import streamlit as st
-import streamlit.components.v1 as components
 import pandas as pd
 import numpy as np
 import plotly.express as px
@@ -28,6 +27,10 @@ st.markdown("""
         color: #2e7d32 !important;
         font-weight: bold;
     }
+    /* Rosso per le palle perse (dato negativo) */
+    [class*="st-key-palle_perse"] [data-testid="stMetricValue"] {
+        color: #c62828 !important;
+    }
     .stSidebar {
         background-color: #f7fafc;
     }
@@ -43,8 +46,8 @@ def render_plotly(fig, height=450):
     )
     fig.update_traces(textfont_color="#000000")
     
-    fig_html = fig.to_html(include_plotlyjs='cdn', auto_play=False)
-    components.html(fig_html, height=height, scrolling=False)
+    fig.update_layout(height=height)
+    st.plotly_chart(fig, width="stretch", theme=None)
 
 # --- CARICAMENTO DATI ---
 @st.cache_data
@@ -118,7 +121,8 @@ if page == "Game Center (Partita)":
     
     # Determina W o L
     esito = "W" if pts_fatti > pts_subiti else ("L" if pts_fatti < pts_subiti else "D")
-    esito_label = f"[{esito}] {pts_fatti} - {pts_subiti}"
+    colore_esito = {"W": "#2e7d32", "L": "#c62828", "D": "#718096"}[esito]
+    diff = int(pts_fatti - pts_subiti)
     
     tot_2pm = stats_gara["2P segnati"].fillna(0).sum()
     tot_2pa = stats_gara["2P tentati"].fillna(0).sum()
@@ -136,11 +140,20 @@ if page == "Game Center (Partita)":
     
     # KPI e Risultato con W / L
     c_res, c_kpi1, c_kpi2, c_kpi3, c_kpi4 = st.columns(5)
-    c_res.metric("Risultato", esito_label, delta=int(pts_fatti - pts_subiti))
+    # Risultato: W verde se vinta, L rossa se persa
+    c_res.markdown(f"""
+        <div style="font-size:14px; color:#31333f;">Risultato</div>
+        <div style="font-size:2.25rem; font-weight:bold; line-height:1.4;">
+            <span style="color:{colore_esito};">{esito}</span>
+            <span style="color:#1a202c;">{pts_fatti} - {pts_subiti}</span>
+        </div>
+        <div style="font-size:14px; color:{colore_esito};">{'+' if diff > 0 else ''}{diff}</div>
+    """, unsafe_allow_html=True)
     c_kpi1.metric("2P %", f"{pct_2p:.1f}%", f"{int(tot_2pm)}/{int(tot_2pa)}")
     c_kpi2.metric("3P %", f"{pct_3p:.1f}%", f"{int(tot_3pm)}/{int(tot_3pa)}")
     c_kpi3.metric("TL %", f"{pct_ft:.1f}%", f"{int(tot_ftm)}/{int(tot_fta)}")
-    c_kpi4.metric("Palle Perse", f"{int(tot_to)}")
+    with c_kpi4.container(key="palle_perse_gara"):
+        st.metric("Palle Perse", f"{int(tot_to)}")
 
     st.markdown("---")
 
@@ -216,7 +229,8 @@ if page == "Game Center (Partita)":
             "3P segnati", "3P tentati", "3P %", 
             "TL segnati", "TL tentati", "TL %", "Palle perse"
         ]],
-        use_container_width=True
+        width="stretch",
+        hide_index=True
     )
 
 # ---------------------------------------------------------
@@ -258,15 +272,19 @@ elif page == "Profilo Giocatore":
         c3.metric("2P %", pct_2p, f"{int(tot_2pm)}/{int(tot_2pa)}")
         c4.metric("3P %", pct_3p, f"{int(tot_3pm)}/{int(tot_3pa)}")
         c5.metric("TL %", pct_ft, f"{int(tot_ftm)}/{int(tot_fta)}")
-        c6.metric("Palle Perse", f"{int(tot_to)}", f"M: {media_to:.1f}/gara")
+        with c6.container(key="palle_perse_giocatore"):
+            st.metric("Palle Perse", f"{int(tot_to)}", f"M: {media_to:.1f}/gara", delta_color="off", delta_arrow="off")
 
         st.markdown("---")
         
         df_gioc = df_gioc.merge(df_squadra[["Numero partita", "Avversario"]], left_on="Partita", right_on="Numero partita")
+        # Etichetta con numero partita, così andata e ritorno con lo stesso avversario restano separate
+        df_gioc = df_gioc.sort_values(by="Numero partita")
+        df_gioc["Gara"] = "G" + df_gioc["Numero partita"].astype(str) + ": " + df_gioc["Avversario"].astype(str)
         
         fig_trend = px.line(
             df_gioc,
-            x="Avversario",
+            x="Gara",
             y="Punti segnati",
             markers=True,
             text="Punti segnati",
@@ -290,7 +308,9 @@ elif page == "Analisi Avanzata & Roster":
         lambda r: "W" if r["Punti fatti"] > r["Punti subiti"] else "L", axis=1
     )
     df_squadra_sorted["Label_Partita"] = df_squadra_sorted.apply(
-        lambda r: f"G{r['Numero partita']}: {r['Avversario']} ({r['Esito']})", axis=1
+        lambda r: f"G{r['Numero partita']}: {r['Avversario']} "
+                  f"(<span style='color:{'#2e7d32' if r['Esito'] == 'W' else '#c62828'}'><b>{r['Esito']}</b></span>)",
+        axis=1
     )
     
     fig_season = go.Figure()
@@ -451,8 +471,13 @@ elif page == "Analisi Avanzata & Roster":
         "TO_Media": "Palle perse media"
     })
 
-    st.dataframe(
+    classifica = (
         agg_display[["Giocatore", "Partite", "Punti_Tot", "Punti_Media", "2P%", "3P%", "TL%", "Palle perse totali", "Palle perse media"]]
-        .sort_values(by=["Partite", "Punti_Tot"], ascending=[False, False]),
-        use_container_width=True
+        .sort_values(by="Punti_Tot", ascending=False)
+        .reset_index(drop=True)
     )
+    # Posizione in classifica da 1 a N
+    classifica.index = classifica.index + 1
+    classifica.index.name = "#"
+
+    st.dataframe(classifica, width="stretch")
