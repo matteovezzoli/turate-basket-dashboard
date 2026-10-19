@@ -60,8 +60,16 @@ def render_plotly(fig, height=450):
     )
 
 # --- CARICAMENTO DATI ---
-@st.cache_data
-def load_data():
+# Statistiche rilevate solo nelle partite in casa: nelle altre restano vuote (N/D)
+NOTA_CASA = "Rilevati solo nelle partite in casa"
+COLS_EXTRA = ["Rimbalzi totali", "Rimbalzi offensivi", "Assist", "Palle rubate"]
+
+def media_o_nd(serie, decimali=1):
+    # Media sulle sole partite in cui il dato è stato rilevato, altrimenti N/D
+    serie = serie.dropna()
+    return f"{serie.mean():.{decimali}f}" if len(serie) > 0 else "N/D"
+
+def trova_file_excel():
     # Cerca il file nella cartella di app.py (non nella cartella di lavoro), ignorando maiuscole/minuscole
     base_dir = os.path.dirname(os.path.abspath(__file__))
     candidati = sorted(
@@ -70,7 +78,12 @@ def load_data():
     )
     if not candidati:
         raise FileNotFoundError(f"Nessun file Turate_Basket.xlsx in {base_dir}. File presenti: {os.listdir(base_dir)}")
-    xls = pd.ExcelFile(os.path.join(base_dir, candidati[0]))
+    return os.path.join(base_dir, candidati[0])
+
+# La data di modifica del file fa parte della cache: quando si carica un Excel nuovo i dati si ricaricano da soli
+@st.cache_data
+def load_data(excel_path, ultima_modifica):
+    xls = pd.ExcelFile(excel_path)
     sheet_names = xls.sheet_names
     
     giocatori_sheet = next((s for s in sheet_names if "gioc" in s.lower()), sheet_names[0])
@@ -85,23 +98,31 @@ def load_data():
     # Formattazione della colonna Data senza orario (GG/MM/AAAA)
     df_squadra["Data"] = pd.to_datetime(df_squadra["Data"]).dt.strftime('%d/%m/%Y')
     
-    df_giocatori = df_giocatori[df_giocatori["Giocatori"].astype(str).str.upper() != "TOTALE"].copy()
+    # Toglie gli spazi prima/dopo i nomi ("Gio " e "Gio" sono lo stesso giocatore)
+    df_giocatori["Giocatori"] = df_giocatori["Giocatori"].astype(str).str.strip()
+    df_giocatori = df_giocatori[df_giocatori["Giocatori"].str.upper() != "TOTALE"].copy()
     
     cols_stats = ["Punti segnati", "2P segnati", "2P tentati", "3P segnati", "3P tentati", "TL segnati", "TL tentati", "Palle perse"]
-    for c in cols_stats:
+    for c in cols_stats + COLS_EXTRA:
         if c not in df_giocatori.columns:
             df_giocatori[c] = np.nan
         else:
             df_giocatori[c] = pd.to_numeric(df_giocatori[c], errors="coerce")
 
+    # Punti calcolati dai tiri (stessa formula dell'Excel), così non dipendono dai valori salvati delle formule
+    df_giocatori["Punti segnati"] = (
+        df_giocatori["2P segnati"].fillna(0) * 2 + df_giocatori["3P segnati"].fillna(0) * 3 + df_giocatori["TL segnati"].fillna(0)
+    )
+
     # Flag: giocato = True se c'è almeno un dato registrato che sia diverso da 0 e non nullo
     # Se il giocatore ha tutti 0 o tutti NaN nelle statistiche della partita, Ha_Giocato diventa False
-    df_giocatori["Ha_Giocato"] = df_giocatori[cols_stats].fillna(0).sum(axis=1) > 0
+    df_giocatori["Ha_Giocato"] = df_giocatori[cols_stats + COLS_EXTRA].fillna(0).sum(axis=1) > 0
     
     return df_squadra, df_giocatori
 
 try:
-    df_squadra, df_giocatori = load_data()
+    excel_path = trova_file_excel()
+    df_squadra, df_giocatori = load_data(excel_path, os.path.getmtime(excel_path))
 except Exception as e:
     st.error(f"Errore durante il caricamento del file Excel 'Turate_Basket': {e}")
     st.stop()
@@ -109,6 +130,15 @@ except Exception as e:
 # --- SIDEBAR & NAVIGAZIONE ---
 st.sidebar.title("🏀 Turate Basket U18")
 page = st.sidebar.radio("Seleziona Sezione:", ["Game Center (Partita)", "Profilo Giocatore", "Analisi Avanzata & Roster"])
+
+# Filtro competizione: vale per tutte le sezioni
+tipi_gara = df_squadra["Tipo"].dropna().astype(str).str.strip().unique().tolist()
+# Il campionato viene prima ed è la vista di default; le amichevoli restano selezionabili
+tipi_gara = sorted(tipi_gara, key=lambda t: t.lower() != "campionato")
+competizione = st.sidebar.radio("Competizione:", tipi_gara + ["Tutte"])
+if competizione != "Tutte":
+    df_squadra = df_squadra[df_squadra["Tipo"].astype(str).str.strip() == competizione].copy()
+    df_giocatori = df_giocatori[df_giocatori["Partita"].isin(df_squadra["Numero partita"])].copy()
 
 # ---------------------------------------------------------
 # TAB 1: GAME CENTER (ANALISI SINGOLA PARTITA)
@@ -118,8 +148,9 @@ if page == "Game Center (Partita)":
     
     partite_disponibili = df_squadra["Numero partita"].tolist()
     partita_sel = st.sidebar.selectbox(
-        "Seleziona Partita:", 
+        "Seleziona Partita:",
         partite_disponibili,
+        index=len(partite_disponibili) - 1,  # si apre sull'ultima partita giocata
         format_func=lambda x: f"{df_squadra[df_squadra['Numero partita']==x]['Tipo'].values[0]} vs {df_squadra[df_squadra['Numero partita']==x]['Avversario'].values[0]} ({df_squadra[df_squadra['Numero partita']==x]['Data'].values[0]})"
     )
     
@@ -141,15 +172,20 @@ if page == "Game Center (Partita)":
     tot_ftm = stats_gara["TL segnati"].fillna(0).sum()
     tot_fta = stats_gara["TL tentati"].fillna(0).sum()
     tot_to = stats_gara["Palle perse"].fillna(0).sum()
-    
+    # min_count=1: se il dato non è stato rilevato in questa partita il totale resta vuoto (N/D)
+    tot_reb = stats_gara["Rimbalzi totali"].sum(min_count=1)
+    tot_oreb = stats_gara["Rimbalzi offensivi"].sum(min_count=1)
+    tot_ast = stats_gara["Assist"].sum(min_count=1)
+    tot_stl = stats_gara["Palle rubate"].sum(min_count=1)
+
     pct_2p = (tot_2pm / tot_2pa * 100) if tot_2pa > 0 else 0.0
     pct_3p = (tot_3pm / tot_3pa * 100) if tot_3pa > 0 else 0.0
     pct_ft = (tot_ftm / tot_fta * 100) if tot_fta > 0 else 0.0
     
     st.subheader(f"{info_gara['Tipo']} vs **{info_gara['Avversario']}** — {info_gara['Data']}")
     
-    # KPI e Risultato con W / L
-    c_res, c_kpi1, c_kpi2, c_kpi3, c_kpi4 = st.columns(5)
+    # KPI e Risultato con W / L (riga 1: risultato e tiro, riga 2: rimbalzi, assist, rubate, perse)
+    c_res, c_kpi1, c_kpi2, c_kpi3 = st.columns(4)
     # Risultato: W verde se vinta, L rossa se persa
     c_res.markdown(f"""
         <div style="font-size:14px; color:#31333f;">Risultato</div>
@@ -162,7 +198,17 @@ if page == "Game Center (Partita)":
     c_kpi1.metric("2P %", f"{pct_2p:.1f}%", f"{int(tot_2pm)}/{int(tot_2pa)}")
     c_kpi2.metric("3P %", f"{pct_3p:.1f}%", f"{int(tot_3pm)}/{int(tot_3pa)}")
     c_kpi3.metric("TL %", f"{pct_ft:.1f}%", f"{int(tot_ftm)}/{int(tot_fta)}")
-    with c_kpi4.container(key="palle_perse_gara"):
+
+    c_reb, c_ast, c_stl, c_to = st.columns(4)
+    c_reb.metric(
+        "Rimbalzi",
+        "N/D" if pd.isna(tot_reb) else f"{int(tot_reb)}",
+        None if pd.isna(tot_oreb) else f"{int(tot_oreb)} offensivi",
+        delta_color="off", delta_arrow="off", help=NOTA_CASA
+    )
+    c_ast.metric("Assist", "N/D" if pd.isna(tot_ast) else f"{int(tot_ast)}", help=NOTA_CASA)
+    c_stl.metric("Palle Rubate", "N/D" if pd.isna(tot_stl) else f"{int(tot_stl)}", help=NOTA_CASA)
+    with c_to.container(key="palle_perse_gara"):
         st.metric("Palle Perse", f"{int(tot_to)}")
 
     st.markdown("---")
@@ -229,15 +275,16 @@ if page == "Game Center (Partita)":
     stats_gara_display["3P %"] = stats_gara_display.apply(lambda r: fmt_pct(r, "3P segnati", "3P tentati"), axis=1)
     stats_gara_display["TL %"] = stats_gara_display.apply(lambda r: fmt_pct(r, "TL segnati", "TL tentati"), axis=1)
 
-    for col in ["Punti segnati", "2P segnati", "2P tentati", "3P segnati", "3P tentati", "TL segnati", "TL tentati", "Palle perse"]:
+    for col in ["Punti segnati", "2P segnati", "2P tentati", "3P segnati", "3P tentati", "TL segnati", "TL tentati", "Palle perse"] + COLS_EXTRA:
         stats_gara_display[col] = stats_gara_display.apply(lambda r, c=col: fmt_val(r, c), axis=1)
 
     st.dataframe(
         stats_gara_display[[
-            "Giocatori", "Titolare", "Punti segnati", 
-            "2P segnati", "2P tentati", "2P %", 
-            "3P segnati", "3P tentati", "3P %", 
-            "TL segnati", "TL tentati", "TL %", "Palle perse"
+            "Giocatori", "Titolare", "Punti segnati",
+            "2P segnati", "2P tentati", "2P %",
+            "3P segnati", "3P tentati", "3P %",
+            "TL segnati", "TL tentati", "TL %",
+            "Rimbalzi totali", "Rimbalzi offensivi", "Assist", "Palle rubate", "Palle perse"
         ]],
         width="stretch",
         hide_index=True
@@ -284,6 +331,16 @@ elif page == "Profilo Giocatore":
         c5.metric("TL %", pct_ft, f"{int(tot_ftm)}/{int(tot_fta)}")
         with c6.container(key="palle_perse_giocatore"):
             st.metric("Palle Perse", f"{int(tot_to)}", f"M: {media_to:.1f}/gara", delta_color="off", delta_arrow="off")
+
+        # Medie su rimbalzi, assist e rubate: contano solo le gare in cui sono stati rilevati
+        gare_con_dati = int(df_gioc["Rimbalzi totali"].notna().sum())
+        nota_gare = f"su {gare_con_dati} {'gara' if gare_con_dati == 1 else 'gare'} in casa" if gare_con_dati > 0 else None
+        c7, c8, c9, _, _, _ = st.columns(6)
+        c7.metric("Media Rimbalzi", media_o_nd(df_gioc["Rimbalzi totali"]),
+                  f"{media_o_nd(df_gioc['Rimbalzi offensivi'])} offensivi" if gare_con_dati > 0 else None,
+                  delta_color="off", delta_arrow="off", help=NOTA_CASA)
+        c8.metric("Media Assist", media_o_nd(df_gioc["Assist"]), nota_gare, delta_color="off", delta_arrow="off", help=NOTA_CASA)
+        c9.metric("Media Palle Rubate", media_o_nd(df_gioc["Palle rubate"]), nota_gare, delta_color="off", delta_arrow="off", help=NOTA_CASA)
 
         st.markdown("---")
         
@@ -471,6 +528,17 @@ elif page == "Analisi Avanzata & Roster":
     roster_summary["3P%"] = roster_summary.apply(lambda r: f"{(r['3PM']/r['3PA']*100):.1f}%" if r["3PA"] > 0 else "N/D", axis=1)
     roster_summary["TL%"] = roster_summary.apply(lambda r: f"{(r['FTM']/r['FTA']*100):.1f}%" if r["FTA"] > 0 else "N/D", axis=1)
 
+    # Medie di rimbalzi, assist e rubate sulle sole gare in cui sono stati rilevati (N/D se mai rilevati)
+    medie_extra = (
+        df_gioc_validi.groupby("Giocatori")[["Rimbalzi totali", "Assist", "Palle rubate"]]
+        .agg(media_o_nd)
+        .rename(columns={"Rimbalzi totali": "Rimbalzi media (gare in casa)", "Assist": "Assist media (gare in casa)", "Palle rubate": "Palle rubate media (gare in casa)"})
+        .reset_index()
+    )
+    roster_summary = roster_summary.merge(medie_extra, on="Giocatori", how="left")
+    for c in ["Rimbalzi media (gare in casa)", "Assist media (gare in casa)", "Palle rubate media (gare in casa)"]:
+        roster_summary[c] = roster_summary[c].fillna("N/D")
+
     agg_display = roster_summary.copy()
     agg_display["Partite"] = agg_display["Partite"].astype(int)
     agg_display["Punti_Tot"] = agg_display["Punti_Tot"].astype(int)
@@ -486,7 +554,8 @@ elif page == "Analisi Avanzata & Roster":
     })
 
     classifica = (
-        agg_display[["Giocatore", "Partite", "Punti_Tot", "Punti_Media", "2P%", "3P%", "TL%", "Palle perse totali", "Palle perse media"]]
+        agg_display[["Giocatore", "Partite", "Punti_Tot", "Punti_Media", "2P%", "3P%", "TL%",
+                     "Rimbalzi media (gare in casa)", "Assist media (gare in casa)", "Palle rubate media (gare in casa)", "Palle perse totali", "Palle perse media"]]
         .sort_values(by="Punti_Tot", ascending=False)
         .reset_index(drop=True)
     )
