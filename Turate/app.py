@@ -114,9 +114,15 @@ def load_data(excel_path, ultima_modifica):
         df_giocatori["2P segnati"].fillna(0) * 2 + df_giocatori["3P segnati"].fillna(0) * 3 + df_giocatori["TL segnati"].fillna(0)
     )
 
-    # Flag: giocato = True se c'è almeno un dato registrato che sia diverso da 0 e non nullo
-    # Se il giocatore ha tutti 0 o tutti NaN nelle statistiche della partita, Ha_Giocato diventa False
-    df_giocatori["Ha_Giocato"] = df_giocatori[cols_stats + COLS_EXTRA].fillna(0).sum(axis=1) > 0
+    # Flag Ha_Giocato: se la colonna "Giocato" è compilata (1 = entrato in campo, 0 = assente) vale quella,
+    # così chi è entrato ma ha fatto 0 in tutto conta come partita giocata.
+    # Se la cella è vuota: giocato solo se c'è almeno una statistica diversa da 0
+    giocato_da_stats = df_giocatori[cols_stats + COLS_EXTRA].fillna(0).sum(axis=1) > 0
+    if "Giocato" in df_giocatori.columns:
+        giocato_excel = pd.to_numeric(df_giocatori["Giocato"], errors="coerce")
+        df_giocatori["Ha_Giocato"] = (giocato_excel == 1).where(giocato_excel.notna(), giocato_da_stats).astype(bool)
+    else:
+        df_giocatori["Ha_Giocato"] = giocato_da_stats
     
     return df_squadra, df_giocatori
 
