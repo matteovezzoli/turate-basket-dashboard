@@ -60,8 +60,11 @@ def render_plotly(fig, height=450):
     )
 
 # --- CARICAMENTO DATI ---
-# Statistiche rilevate solo nelle partite in casa: nelle altre restano vuote (N/D)
-NOTA_CASA = "Rilevati solo nelle partite in casa"
+# Rimbalzi, assist e palle rubate non vengono rilevati in tutte le partite: dove mancano restano vuoti (N/D)
+NOTA_RILEVATI = "Rimbalzi, assist e palle rubate non vengono rilevati in tutte le partite"
+
+def n_partite(n):
+    return f"{n} {'partita' if n == 1 else 'partite'}"
 COLS_EXTRA = ["Rimbalzi totali", "Rimbalzi offensivi", "Assist", "Palle rubate"]
 
 def media_o_nd(serie, decimali=1):
@@ -146,6 +149,9 @@ if competizione != "Tutte":
     df_squadra = df_squadra[df_squadra["Tipo"].astype(str).str.strip() == competizione].copy()
     df_giocatori = df_giocatori[df_giocatori["Partita"].isin(df_squadra["Numero partita"])].copy()
 
+# Partite della competizione scelta in cui rimbalzi, assist e rubate sono stati rilevati
+gare_rilevate = df_giocatori.loc[df_giocatori[COLS_EXTRA].notna().any(axis=1), "Partita"].nunique()
+
 # ---------------------------------------------------------
 # TAB 1: GAME CENTER (ANALISI SINGOLA PARTITA)
 # ---------------------------------------------------------
@@ -210,10 +216,10 @@ if page == "Game Center (Partita)":
         "Rimbalzi",
         "N/D" if pd.isna(tot_reb) else f"{int(tot_reb)}",
         None if pd.isna(tot_oreb) else f"{int(tot_oreb)} offensivi",
-        delta_color="off", delta_arrow="off", help=NOTA_CASA
+        delta_color="off", delta_arrow="off", help=NOTA_RILEVATI
     )
-    c_ast.metric("Assist", "N/D" if pd.isna(tot_ast) else f"{int(tot_ast)}", help=NOTA_CASA)
-    c_stl.metric("Palle Rubate", "N/D" if pd.isna(tot_stl) else f"{int(tot_stl)}", help=NOTA_CASA)
+    c_ast.metric("Assist", "N/D" if pd.isna(tot_ast) else f"{int(tot_ast)}", help=NOTA_RILEVATI)
+    c_stl.metric("Palle Rubate", "N/D" if pd.isna(tot_stl) else f"{int(tot_stl)}", help=NOTA_RILEVATI)
     with c_to.container(key="palle_perse_gara"):
         st.metric("Palle Perse", f"{int(tot_to)}")
 
@@ -338,15 +344,19 @@ elif page == "Profilo Giocatore":
         with c6.container(key="palle_perse_giocatore"):
             st.metric("Palle Perse", f"{int(tot_to)}", f"M: {media_to:.1f}/gara", delta_color="off", delta_arrow="off")
 
-        # Medie su rimbalzi, assist e rubate: contano solo le gare in cui sono stati rilevati
+        # Partite in cui il giocatore è partito in quintetto (tra quelle giocate)
+        partite_quintetto = int((pd.to_numeric(df_gioc["Titolare"], errors="coerce") == 1).sum())
+
+        # Medie su rimbalzi, assist e rubate: contano solo le partite in cui sono stati rilevati
         gare_con_dati = int(df_gioc["Rimbalzi totali"].notna().sum())
-        nota_gare = f"su {gare_con_dati} {'gara' if gare_con_dati == 1 else 'gare'} in casa" if gare_con_dati > 0 else None
-        c7, c8, c9, _, _, _ = st.columns(6)
-        c7.metric("Media Rimbalzi", media_o_nd(df_gioc["Rimbalzi totali"]),
-                  f"{media_o_nd(df_gioc['Rimbalzi offensivi'])} offensivi" if gare_con_dati > 0 else None,
-                  delta_color="off", delta_arrow="off", help=NOTA_CASA)
-        c8.metric("Media Assist", media_o_nd(df_gioc["Assist"]), nota_gare, delta_color="off", delta_arrow="off", help=NOTA_CASA)
-        c9.metric("Media Palle Rubate", media_o_nd(df_gioc["Palle rubate"]), nota_gare, delta_color="off", delta_arrow="off", help=NOTA_CASA)
+        nota_gare = f"su {n_partite(gare_con_dati)}" if gare_con_dati > 0 else None
+        c7, c8, c9, c10, _, _ = st.columns(6)
+        c7.metric("Partite in Quintetto", f"{partite_quintetto}", f"su {partite_giocate} giocate", delta_color="off", delta_arrow="off")
+        c8.metric("Media Rimbalzi", media_o_nd(df_gioc["Rimbalzi totali"]),
+                  f"{media_o_nd(df_gioc['Rimbalzi offensivi'])} offensivi, {nota_gare}" if gare_con_dati > 0 else None,
+                  delta_color="off", delta_arrow="off", help=NOTA_RILEVATI)
+        c9.metric("Media Assist", media_o_nd(df_gioc["Assist"]), nota_gare, delta_color="off", delta_arrow="off", help=NOTA_RILEVATI)
+        c10.metric("Media Palle Rubate", media_o_nd(df_gioc["Palle rubate"]), nota_gare, delta_color="off", delta_arrow="off", help=NOTA_RILEVATI)
 
         st.markdown("---")
         
@@ -534,15 +544,21 @@ elif page == "Analisi Avanzata & Roster":
     roster_summary["3P%"] = roster_summary.apply(lambda r: f"{(r['3PM']/r['3PA']*100):.1f}%" if r["3PA"] > 0 else "N/D", axis=1)
     roster_summary["TL%"] = roster_summary.apply(lambda r: f"{(r['FTM']/r['FTA']*100):.1f}%" if r["FTA"] > 0 else "N/D", axis=1)
 
-    # Medie di rimbalzi, assist e rubate sulle sole gare in cui sono stati rilevati (N/D se mai rilevati)
+    # Medie di rimbalzi, assist e rubate sulle sole partite in cui sono stati rilevati (N/D se mai rilevati)
+    nota_roster = f"rilevati in {n_partite(gare_rilevate)}" if gare_rilevate > 0 else "non rilevati"
+    cols_medie_extra = {
+        "Rimbalzi totali": f"Rimbalzi media ({nota_roster})",
+        "Assist": f"Assist media ({nota_roster})",
+        "Palle rubate": f"Palle rubate media ({nota_roster})",
+    }
     medie_extra = (
-        df_gioc_validi.groupby("Giocatori")[["Rimbalzi totali", "Assist", "Palle rubate"]]
+        df_gioc_validi.groupby("Giocatori")[list(cols_medie_extra)]
         .agg(media_o_nd)
-        .rename(columns={"Rimbalzi totali": "Rimbalzi media (gare in casa)", "Assist": "Assist media (gare in casa)", "Palle rubate": "Palle rubate media (gare in casa)"})
+        .rename(columns=cols_medie_extra)
         .reset_index()
     )
     roster_summary = roster_summary.merge(medie_extra, on="Giocatori", how="left")
-    for c in ["Rimbalzi media (gare in casa)", "Assist media (gare in casa)", "Palle rubate media (gare in casa)"]:
+    for c in cols_medie_extra.values():
         roster_summary[c] = roster_summary[c].fillna("N/D")
 
     agg_display = roster_summary.copy()
@@ -561,7 +577,7 @@ elif page == "Analisi Avanzata & Roster":
 
     classifica = (
         agg_display[["Giocatore", "Partite", "Punti_Tot", "Punti_Media", "2P%", "3P%", "TL%",
-                     "Rimbalzi media (gare in casa)", "Assist media (gare in casa)", "Palle rubate media (gare in casa)", "Palle perse totali", "Palle perse media"]]
+                     *cols_medie_extra.values(), "Palle perse totali", "Palle perse media"]]
         .sort_values(by="Punti_Tot", ascending=False)
         .reset_index(drop=True)
     )
